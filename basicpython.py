@@ -4,21 +4,20 @@ import code
 import os
 import sys
 import traceback
-#import readline
 import prompt_toolkit
 from prompt_toolkit.filters import HasSelection, Condition
-from prompt_toolkit.key_binding.registry import Registry
-from prompt_toolkit.key_binding.defaults import load_key_bindings
-from prompt_toolkit.key_binding.bindings.basic import load_basic_bindings
+from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.history import InMemoryHistory
-#from prompt_toolkit import print_formatted_text
+from prompt_toolkit import print_formatted_text
+from prompt_toolkit.formatted_text import PygmentsTokens
 import rlcompleter
 from collections import OrderedDict
 import re
 import pygments
 from pygments.lexers import Python3Lexer
-from prompt_toolkit.layout.lexers import PygmentsLexer
+from pygments.token import Token
+from prompt_toolkit.lexers import PygmentsLexer
 
 # SomeClass will be available in the interactive console
 #from yourmodule import SomeClass
@@ -97,18 +96,18 @@ def is_edit_command(line) -> bool: # -> bool
             return True # empty program
         program_text = '\n'.join(line for no, line in program_items())+'\n'
         lexed = pygments.lex(program_text, pyglexer)
-        def print_formatted_text(toks):
-            print(''.join(s for _, s in toks), end='')
+        #def print_formatted_text(toks):
+        #    print(''.join(s for _, s in toks), end='')
         nos = [no for no, line in program_items()]
         i = 0
         line = []
         for item in lexed:
             if len(line) == 0:
-                line += [('Python3Lexer.Token.Literal.Number.Integer', "{:5} ".format(nos[i]))]
+                line += [(Token.Literal.Number.Integer, "{:5} ".format(nos[i]))]
                 i = i+1
             line += [item]
             if item[1] == '\n':
-                print_formatted_text(line)
+                print_formatted_text(PygmentsTokens(line[:-1]))
                 line = []
         return True
     elif cmd == "run":
@@ -164,8 +163,8 @@ def is_add_command(line):
     #print('line_no=', line_no, 'code=', code)
     return (line_no, line)
 
-bindings = load_key_bindings(enable_search=True, enable_auto_suggest_bindings=True)
-handle = bindings.add_binding
+bindings = KeyBindings() #load_key_bindings(enable_search=True, enable_auto_suggest_bindings=True)
+handle = bindings.add
 
 @handle(' ')
 def _(event):
@@ -185,30 +184,13 @@ def _(event):
             b.insert_text(program[no], move_cursor=False)
     else:
         b.insert_text(' ') # regular space
-@handle(Keys.ControlC)
-def _(event):
-    event.cli.abort()
-# from basic.py:
-suggestion_available = Condition(
-    lambda cli:
-        cli.current_buffer.suggestion is not None and
-        cli.current_buffer.document.is_cursor_at_the_end)
-
-@handle(Keys.ControlF, filter=suggestion_available)
-@handle(Keys.ControlE, filter=suggestion_available)
-@handle(Keys.Right, filter=suggestion_available)
-def _(event):
-    " Accept suggestion. "
-    b = event.current_buffer
-    suggestion = b.suggestion
-
-    if suggestion:
-        b.insert_text(suggestion.text)
 
 last_edited_line = None
 
-#session = prompt_toolkit.PromptSession(key_bindings=bindings)
 history = InMemoryHistory()
+session = prompt_toolkit.PromptSession(key_bindings=bindings,
+                                       history=history,
+                                       lexer=lexer)
 
 def getline(last_edited_line):
     prefix = ""
@@ -218,11 +200,10 @@ def getline(last_edited_line):
         prefix = "{:5} ".format(next_line)
         if next_line in program:
             suffix = program[next_line]
-    try:    
-        return prompt_toolkit.prompt(key_bindings_registry=bindings,
-            default=prefix + suffix,
-            history=history,
-            lexer=lexer) # TODO: cursor at pfx
+    try:
+        return session.prompt(default=prefix + suffix) # TODO: cursor at pfx
+        #return prompt_toolkit.prompt(default=prefix + suffix,key_bindings=bindings,
+        #                               lexer=lexer) # TODO: cursor at pfx
     except KeyboardInterrupt:
         return ""
  
