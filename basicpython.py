@@ -46,28 +46,53 @@ def run_program():
 def handle_exception(e):
     print("".join(traceback.format_exception(*sys.exc_info())))
 
+# TODO: in case of error, we should throw, and catch this above
 def is_edit_command(line) -> bool: # -> bool
     global program
     global program_path
     global program_hash_bang
-    p = re.compile('^([a-z]+) +(.*)$')
+    p = re.compile('^([a-z]+)( ?) *(.*)$')
     p1 = re.compile('^([a-z]+) *$')
     m  = p.match(line)
     m1 = p1.match(line)
-    if m1:
-        cmd = m1.groups()[0]
+    if not m:
+        return False
+    cmd, space, arg = m.groups()
+    if space == '' and arg != '':
+        return False # e.g. 'save13 = 5'
+    if arg == '':
         arg = None
-    elif m:
-        cmd, arg = m.groups()
-    else:
-       return False
     def handled_with_err(msg):
         print(msg)
         return True
     def unexpected_arg():
-        return handled_with_err('SyntaxError: unexpected argument was given.')
+        return handled_with_err('SyntaxError: unexpected argument')
     def arg_expected():
         return handled_with_err('SyntaxError: required argument missing')
+    def parse_no_range(arg): # None if malformed (error already printed)
+        if arg is None:
+            arg = ''
+        p = re.compile('^([0-9]*)(-?)([0-9]*)$')
+        m = p.match(arg)
+        def malformed():
+            handled_with_err("SyntaxError: mal-formed line number range")
+            return None
+        if not m:
+            return malformed()
+        first, dash, last = m.groups()
+        first = int(first) if first != '' else None
+        last  = int(last)  if last  != '' else first if dash != '-' else None
+        if first is not None and last is not None and first > last:
+            return malformed()
+        if ((first is not None and first not in program) or
+            (last  is not None and last  not in program)):
+            handled_with_err("SyntaxError: no such line number")
+            return None
+        return (first, last)
+    def in_no_range(no, r):
+        first_no, last_no = r
+        return ((first_no is None or no >= first_no) and
+                (last_no  is None or no <= last_no))
     if cmd == "new":
         if arg is not None:
             return unexpected_arg()
@@ -84,24 +109,42 @@ def is_edit_command(line) -> bool: # -> bool
             program[no] = item[1]
             no += 10
         return True
-    elif line == "list":
+    elif cmd == "del" and arg and re.compile('^[0-9-]').match(arg):
+        r = parse_no_range(arg)
+        if not r:
+            return True # invalid, and error already printed
+        del_nos = (no for no, _ in program_items() if in_no_range(no, r))
+        for no in del_nos:
+            del program[no]
+        return True
+    elif cmd == "list" and (not arg or re.compile('^[0-9-]').match(arg)):
+        r = parse_no_range(arg)
+        if not r:
+            return True # invalid, and error already printed
         if len(program_items()) == 0:
             return True # empty program
-        program_text = '\n'.join(line for no, line in program_items())+'\n'
-        lexed = pygments.lex(program_text, pyglexer)
-        #def print_formatted_text(toks):
-        #    print(''.join(s for _, s in toks), end='')
-        nos = [no for no, line in program_items()]
-        i = 0
-        line = []
-        for item in lexed:
-            if len(line) == 0:
-                line += [(Token.Literal.Number.Integer, "{:5} ".format(nos[i]))]
-                i = i+1
-            line += [item]
-            if item[1] == '\n':
-                print_formatted_text(PygmentsTokens(line[:-1]))
-                line = []
+        def next_line(items):        
+            program_text = '\n'.join(line for no, line in items) + '\n'
+            lexed = pygments.lex(program_text, pyglexer)
+            no_iter = iter([no for no, line in items]) # line numbers
+            line = []
+            for item in lexed:
+                if item[1] == '\n': # end of line: yield it
+                    no = next(no_iter) # this is its line number
+                    yield (no, line)
+                    line = []
+                else:
+                    line.append(item)
+        shown = False
+        for no, lex_tuples in next_line(program_items()):
+            if not in_no_range(no, r):
+                if shown:
+                    break
+                else:
+                    continue
+            no_tuple = (Token.Literal.Number.Integer, "{:5} ".format(no))
+            print_formatted_text(PygmentsTokens([no_tuple] + lex_tuples))
+            shown = True
         return True
     elif cmd == "run":
         if arg is None:
@@ -168,7 +211,6 @@ def is_edit_command(line) -> bool: # -> bool
     return False
 
 def is_add_command(line):
-    #del_line_pattern = re.compile('^del +([0-9]+) *$')
     add_line_pattern = re.compile('^ *([0-9]+) (.*)$')
     m = add_line_pattern.match(line)
     if not m:
