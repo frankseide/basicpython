@@ -246,42 +246,65 @@ def _(event):
     else:
         b.insert_text(' ') # regular space
 
-last_edited_line = None
+def find_next_line_after(line_no):
+    line_nos = [no for no, _ in program_items()]
+    i = 1 + line_nos.index(line_no)
+    if i < len(line_nos):
+        return min(line_no + 10, line_nos[i])
+    else:
+        return line_no + 10
+
+def determine_indent(prev_line): # TODO: make this less simplistic
+    # TODO: the following are examples of what is not handled:
+    #  - ':' and 'pass' vs. line-end comments
+    #  - multi-line expressions (both indent inside, and see above)
+    #  - return statement should unindent as well
+    if prev_line is None:
+        return 0
+    indent = len(prev_line) - len(prev_line.lstrip(' '))
+    if prev_line.endswith(':'):
+        indent += 4
+    elif prev_line.endswith('pass') and indent >= 4:
+        indent -= 4
+    return indent
 
 history = InMemoryHistory()
 session = prompt_toolkit.PromptSession(key_bindings=bindings,
                                        history=history,
                                        lexer=lexer)
 
-def getline(last_edited_line):
-    prefix = ""
-    suffix = ""
+def getline(last_edited_line, prev_line):
+    prefix = "" # line number and indentation
+    suffix = "" # existing line content
     if last_edited_line is not None:
-        next_line = last_edited_line + 10 # TODO: check next existing line
-        prefix = "{:5} ".format(next_line)
-        if next_line in program:
-            suffix = program[next_line]
+        next_line_no = find_next_line_after(last_edited_line)
+        prefix = "{:5} ".format(next_line_no)
+        prev_line = program[last_edited_line] # must exist
+        if next_line_no in program:
+            suffix = program[next_line_no]
     try:
+        if suffix == '':
+            prefix += ' ' * determine_indent(prev_line)
         return session.prompt(default=prefix + suffix) # TODO: cursor at pfx
-        #return prompt_toolkit.prompt(default=prefix + suffix,key_bindings=bindings,
-        #                               lexer=lexer) # TODO: cursor at pfx
     except KeyboardInterrupt:
         return ""
  
 while True:
-    print("READY.")
-    line = getline(last_edited_line)
+    print("Ready.")
+    last_edited_line = None
+    line = getline(last_edited_line, None)
     (last_edited_line, line) = is_add_command(line)
-    while last_edited_line is not None:
-        line = getline(last_edited_line)
+    while last_edited_line is not None: # no READY between entered lines
+        line = getline(last_edited_line, None)
         (last_edited_line, line) = is_add_command(line)
-        # TODO: keep prompt after list
-        pass
     if is_edit_command(line):
         continue
     try:
+        last_line = line
         while shell.runsource(line):
-            line = line + '\n' + getline(None)
+            new_line = getline(None, last_line)
+            line = line + '\n' + new_line
+            last_line = new_line
     except Exception as e:
         handle_exception(e)
         pass
