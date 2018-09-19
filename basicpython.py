@@ -19,17 +19,8 @@ from pygments.lexers import Python3Lexer
 from pygments.token import Token
 from prompt_toolkit.lexers import PygmentsLexer
 
-# SomeClass will be available in the interactive console
-#from yourmodule import SomeClass
-
-class BasicPython(object):
-    def __init__():
-        pass
-
 vars = globals()
 vars.update(locals())
-#readline.set_completer(rlcompleter.Completer(vars).complete)
-#readline.parse_and_bind("tab: complete")
 shell = code.InteractiveInterpreter(vars)
 import psutil
 mem = psutil.virtual_memory().total
@@ -38,6 +29,7 @@ print(banner)
 
 program = OrderedDict()
 program_path = None
+program_hash_bang = None
 
 pyglexer = Python3Lexer()
 lexer = PygmentsLexer(Python3Lexer)
@@ -57,6 +49,7 @@ def handle_exception(e):
 def is_edit_command(line) -> bool: # -> bool
     global program
     global program_path
+    global program_hash_bang
     p = re.compile('^([a-z]+) +(.*)$')
     p1 = re.compile('^([a-z]+) *$')
     m  = p.match(line)
@@ -129,22 +122,48 @@ def is_edit_command(line) -> bool: # -> bool
             if program_path is None:
                 return arg_expected()
             arg = program_path # default to last used pathname
-        path = arg + ".pyl"
+        path = arg + ".py"
+        hb = program_hash_bang or "#!/usr/bin/python3"
+        # where line numbers do not follow the 10-increment pattern,
+        # we add a line-no comment to set the line number
+        def lines(items):
+            yield hb # make files self-executable
+            expected_no = 10
+            for item in program_items():
+                no, line = item
+                if no != expected_no:
+                    yield "# line-no: " + str(no)
+                yield line
+                expected_no = no + 10
         with open(path, 'w') as f:
-            f.writelines("{:5} {}\n".format(*items)
-                         for items in program_items())
+            f.writelines(line + '\n'
+                         for line in lines(program_items()))
+        os.chmod(path, 0o777)
         print('Saved {} lines to'.format(len(program_items())), path)
         program_path = arg
+        program_hash_bang = hb
         return True
     elif cmd == "load":
         if arg is None:
             return arg_expected()
-        path = arg + ".pyl"
+        path = arg + ".py"
         with open(path, 'r') as f:
-            program = OrderedDict((int(line[:6]), line[6:-1])
-                                  for line in f.readlines())
+            lines = f.readlines()
+        line_tuples = []
+        no = 10
+        hb = None
+        for line in lines:
+            if not line_tuples and line.startswith("#!"):
+                hb = line[:-1]
+            elif line.startswith("# line-no: "):
+                no = int(line[11:])
+            else:
+                line_tuples += [(no, line[:-1])]
+                no += 10
+        program = OrderedDict(line_tuples)
         print('Loaded {} lines from'.format(len(program_items())), path)
         program_path = arg
+        program_hash_bang = hb
         return True
     return False
 
