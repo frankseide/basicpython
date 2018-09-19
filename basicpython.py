@@ -218,7 +218,7 @@ def is_add_command(line):
     g = m.groups()
     line_no = int(g[0])
     code = g[1]
-    if code == "": # user just hit enter
+    if code.lstrip(' ') == "": # user just hit enter
         return (None, "")
     program[line_no] = code
     #print('line_no=', line_no, 'code=', code)
