@@ -41,7 +41,13 @@ def program_items(): # use this to read out program, items() won't sort
 def run_program():
     program_lines = [l for (n,l) in program_items()]
     obj = compile('\n'.join(program_lines), 'program', mode='exec')
-    exec(obj, globals(), locals())
+    exec(obj, vars, vars)
+    # BUGBUG: this leaves e.g. imports and vars set inside in global space
+    #         Using globals() and locals() causes imports to fail.
+    # Do we need to pass copies of these or something?
+    # Also, to ensure all objects get destroyed, maybe see this:
+    # http://lucumr.pocoo.org/2011/2/1/exec-in-python/
+    # indicating that Python explicitly delets vars before shutting down.
 
 def handle_exception(e):
     print("".join(traceback.format_exception(*sys.exc_info())))
