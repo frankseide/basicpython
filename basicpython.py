@@ -1,8 +1,13 @@
 #!/usr/bin/python3
 
-import code
 import os
 import sys
+
+# we capture the globals before importing our stuff
+vars = dict(globals())
+vars.update(locals())
+
+import code
 import traceback
 import prompt_toolkit
 from prompt_toolkit.filters import HasSelection, Condition
@@ -57,9 +62,12 @@ class TheProgram:
         # TODO: just use the __ routine directly to allow 'del' on this objects
         del self._program[no]
 
+    def get(self, no):
+        return self._program[no]
+
     def try_get(self, no):
         try:
-            return self._program[no]
+            return get(no)
         except:
             return None
 
@@ -122,18 +130,17 @@ class TheProgram:
 program = TheProgram()
 
 class Runner:
-    vars = globals()
-    vars.update(locals())
     shell = code.InteractiveInterpreter(vars)
 
     def run(program):
         obj = compile('\n'.join(program.text()), 'program', mode='exec')
-        vars.__file__ = program.path
-        # __name__
-        exec(obj, vars, vars)
-        # BUGBUG: this leaves e.g. imports and vars set inside in global space
-        #         Using globals() and locals() causes imports to fail.
-        # Do we need to pass copies of these or something?
+        run_vars = dict(vars)
+        run_vars['__file__'] = program.path
+        def exit(): # prevent program from exiting the environment
+            raise KeyboardInterrupt
+        run_vars['exit'] = exit # BUGBUG: This does not work.
+        # TODO: __name__
+        exec(obj, run_vars, run_vars)
         # Also, to ensure all objects get destroyed, maybe see this:
         # http://lucumr.pocoo.org/2011/2/1/exec-in-python/
         # indicating that Python explicitly delets vars before shutting down.
@@ -148,7 +155,7 @@ def handle_exception(e):
     print("".join(traceback.format_exception(*sys.exc_info())))
 
 # TODO: in case of error, we should throw, and catch this above
-def is_edit_command(line) -> bool: # -> True if handled
+def handle_edit_command(line) -> bool: # -> True if handled
     global program
     p = re.compile('^([a-z]+)( ?) *(.*)$')
     p1 = re.compile('^([a-z]+) *$')
@@ -212,7 +219,7 @@ def is_edit_command(line) -> bool: # -> True if handled
         if len(program._program) == 0:
             return True # empty program
         for no in program.line_nos(range=r):
-            no_tuple = (Token.Literal.Number.Integer, "{:5} ".format(no))
+            no_tuple = (Token.Literal.Number.Integer, " {:5} ".format(no))
             prompt_toolkit.print_formatted_text(PygmentsTokens([no_tuple] + list(program.get_lexed(no))[:-1]))
         return True
         # old; remove:
@@ -234,7 +241,7 @@ def is_edit_command(line) -> bool: # -> True if handled
                     break
                 else:
                     continue
-            no_tuple = (Token.Literal.Number.Integer, "{:5} ".format(no))
+            no_tuple = (Token.Literal.Number.Integer, " {:5} ".format(no))
             print_formatted_text(PygmentsTokens([no_tuple] + lex_tuples))
             shown = True
         return True
@@ -248,8 +255,8 @@ def is_edit_command(line) -> bool: # -> True if handled
                 print('KeyboardInterrupt')
             return True
         else: # run PATH
-            is_edit_command("load " + arg)
-            is_edit_command("run")
+            handle_edit_command("load " + arg)
+            handle_edit_command("run")
             return True
     elif cmd == "save":
         if arg is None:
@@ -269,8 +276,8 @@ def is_edit_command(line) -> bool: # -> True if handled
         return True
     return False
 
-def is_add_command(line):
-    add_line_pattern = re.compile('^ *([0-9]+) (.*)$')
+def handle_enter_line(line):
+    add_line_pattern = re.compile('^  *([0-9]+) (.*)$') # note: must have at least one space; otherwise it's an expression
     m = add_line_pattern.match(line)
     if not m:
         return (None, line)
@@ -330,13 +337,13 @@ def getline(last_edited_line, prev_line):
     suffix = "" # existing line content
     if last_edited_line is not None:
         next_line_no = program.next_line_no_after(last_edited_line)
-        prefix = "{:5} ".format(next_line_no)
-        prev_line = program.try_get(last_edited_line) # must exist
+        prev_line = program.get(last_edited_line) # must exist
+        prefix = " {:5} ".format(next_line_no)
         suffix = program.try_get(next_line_no) or ""
     try:
-        if suffix == '':
+        if suffix == "":
             prefix += ' ' * determine_indent(prev_line)
-        return session.prompt(default=prefix + suffix) # TODO: cursor at pfx
+        return session.prompt(default=prefix + suffix) # TODO: cursor at prefix
         # TODO: if all-blank line and no change made by user then return empty line
     except KeyboardInterrupt:
         return ""
@@ -350,11 +357,11 @@ while True:
     print("Ready.")
     last_edited_line = None
     line = getline(last_edited_line, None)
-    (last_edited_line, line) = is_add_command(line)
+    (last_edited_line, line) = handle_enter_line(line)
     while last_edited_line is not None: # no READY between entered lines
         line = getline(last_edited_line, None)
-        (last_edited_line, line) = is_add_command(line)
-    if is_edit_command(line):
+        (last_edited_line, line) = handle_enter_line(line)
+    if handle_edit_command(line):
         continue
     try:
         last_line = line
