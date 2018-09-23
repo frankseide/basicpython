@@ -9,54 +9,147 @@ from prompt_toolkit.filters import HasSelection, Condition
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.history import InMemoryHistory
-from prompt_toolkit import print_formatted_text
 from prompt_toolkit.formatted_text import PygmentsTokens
 import rlcompleter
-from collections import OrderedDict
 import re
 import pygments
 from pygments.lexers import Python3Lexer
 from pygments.token import Token
 from prompt_toolkit.lexers import PygmentsLexer
 
-vars = globals()
-vars.update(locals())
-shell = code.InteractiveInterpreter(vars)
-import psutil
-mem = psutil.virtual_memory().total
-banner = "\n    **** BASIC PYTHON V1 ****\n\n{:,} BYTES FREE\n".format(mem)
-print(banner)
+class TheProgram:
+    pyglexer = Python3Lexer()
 
-program = OrderedDict()
-program_path = None
-program_hash_bang = None
+    def __init__(self, path=None, hash_bang=None):
+        self._program = dict()
+        self.path = path
+        self.hash_bang = hash_bang
 
-pyglexer = Python3Lexer()
+    def in_no_range(no, range): # test if line number is within a given optional range tuple
+        if not range: # no range constraint given
+            return True
+        first_no, last_no = range
+        return ((first_no is None or no >= first_no) and
+                (last_no  is None or no <= last_no))
+
+    def line_nos(self, range=None): # generator that returns our lines, optionally within a given range
+        # TODO: cache this
+        # TODO: create a proper iterator that iterates this object in line order
+        nos = list(self._program.keys()) # Python has no equivalent of an ordered map
+        nos.sort()
+        any = False
+        for no in nos:
+            if not TheProgram.in_no_range(no, range):
+                if any:
+                    break
+                else:
+                    continue
+            yield no
+            any = True
+
+    def text(self):
+        return (self._program[no] for no in self.line_nos())
+
+    def add(self, no, line):
+        self._program[no] = line
+
+    def erase(self, no):
+        # TODO: just use the __ routine directly to allow 'del' on this objects
+        del self._program[no]
+
+    def try_get(self, no):
+        try:
+            return self._program[no]
+        except:
+            return None
+
+    def get_lexed(self, no):
+        # TODO: lex the whole thing, not just line by line
+        # TODO: cache this
+        return pygments.lex(self._program[no], TheProgram.pyglexer)
+
+    def next_line_no_after(self, line_no):
+        nos = list(self.line_nos())
+        i = 1 + nos.index(line_no)
+        # TODO: there probably is a proper iterator-based way to do this
+        if i < len(nos):
+            return min(line_no + 10, nos[i])
+        else:
+            return line_no + 10
+
+    def renumbered(self):
+        new_program = TheProgram(path=self.path, hash_bang=self.hash_bang)
+        new_no = 10
+        for item in iter(self):
+            new_program.add(new_no, item[1])
+            new_nono += 10
+        return new_program
+
+    def load(path):
+        new_program = TheProgram(path=path)
+        no = 10
+        first = True
+        for line in open(path, 'r').readlines():
+            if first and line.startswith("#!"):
+                new_program.hash_bang = line[:-1]
+            elif line.startswith("# line-no: "):
+                no = int(line[11:])
+            else:
+                new_program.add(no, line[:-1])
+                no += 10
+            first = False
+        return new_program
+
+    def save(self, path):
+        hb = self.hash_bang or "#!/usr/bin/python3"
+        # where line numbers do not follow the 10-increment pattern,
+        # we add a line-no comment to set the line number
+        def lines(items):
+            yield hb # make files self-executable
+            expected_no = 10
+            for no in self.line_nos():
+                if no != expected_no:
+                    yield "# line-no: " + str(no)
+                yield self._program[no]
+                expected_no = no + 10
+        with open(path, 'w') as f:
+            f.writelines(line + '\n'
+                         for line in lines(self._program))
+        os.chmod(path, 0o777)
+        self.path = arg
+        self.hash_bang = hb
+
+program = TheProgram()
+
+class Runner:
+    vars = globals()
+    vars.update(locals())
+    shell = code.InteractiveInterpreter(vars)
+
+    def run(program):
+        obj = compile('\n'.join(program.text()), 'program', mode='exec')
+        vars.__file__ = program.path
+        # __name__
+        exec(obj, vars, vars)
+        # BUGBUG: this leaves e.g. imports and vars set inside in global space
+        #         Using globals() and locals() causes imports to fail.
+        # Do we need to pass copies of these or something?
+        # Also, to ensure all objects get destroyed, maybe see this:
+        # http://lucumr.pocoo.org/2011/2/1/exec-in-python/
+        # indicating that Python explicitly delets vars before shutting down.
+
+    def runsource(line):
+        return Runner.shell.runsource(line)
+
+#pyglexer = Python3Lexer()
 lexer = PygmentsLexer(Python3Lexer)
-
-def program_items(): # use this to read out program, items() won't sort
-    sorted_line_nos = sorted(program.keys())
-    return [(n, program[n]) for n in sorted_line_nos] # TODO: do this right
-
-def run_program():
-    program_lines = [l for (n,l) in program_items()]
-    obj = compile('\n'.join(program_lines), 'program', mode='exec')
-    exec(obj, vars, vars)
-    # BUGBUG: this leaves e.g. imports and vars set inside in global space
-    #         Using globals() and locals() causes imports to fail.
-    # Do we need to pass copies of these or something?
-    # Also, to ensure all objects get destroyed, maybe see this:
-    # http://lucumr.pocoo.org/2011/2/1/exec-in-python/
-    # indicating that Python explicitly delets vars before shutting down.
 
 def handle_exception(e):
     print("".join(traceback.format_exception(*sys.exc_info())))
 
 # TODO: in case of error, we should throw, and catch this above
-def is_edit_command(line) -> bool: # -> bool
+def is_edit_command(line) -> bool: # -> True if handled
     global program
-    global program_path
-    global program_hash_bang
     p = re.compile('^([a-z]+)( ?) *(.*)$')
     p1 = re.compile('^([a-z]+) *$')
     m  = p.match(line)
@@ -90,45 +183,39 @@ def is_edit_command(line) -> bool: # -> bool
         last  = int(last)  if last  != '' else first if dash != '-' else None
         if first is not None and last is not None and first > last:
             return malformed()
-        if ((first is not None and first not in program) or
-            (last  is not None and last  not in program)):
+        if ((first is not None and first not in program._program) or
+            (last  is not None and last  not in program._program)):
             handled_with_err("SyntaxError: no such line number")
             return None
         return (first, last)
-    def in_no_range(no, r):
-        first_no, last_no = r
-        return ((first_no is None or no >= first_no) and
-                (last_no  is None or no <= last_no))
     if cmd == "new":
         if arg is not None:
             return unexpected_arg()
-        program = OrderedDict()
-        program_path = None
+        program = TheProgram()
         return True
     elif cmd == "renumber":
         if arg is not None:
             return unexpected_arg()
-        items = program_items()
-        program = OrderedDict()
-        no = 10
-        for item in items:
-            program[no] = item[1]
-            no += 10
+        program = program.renumbered()
         return True
     elif cmd == "del" and arg and re.compile('^[0-9-]').match(arg):
         r = parse_no_range(arg)
         if not r:
             return True # invalid, and error already printed
-        del_nos = (no for no, _ in program_items() if in_no_range(no, r))
-        for no in del_nos:
-            del program[no]
+        for no in program.line_nos(range=r):
+            program.erase(no)
         return True
     elif cmd == "list" and (not arg or re.compile('^[0-9-]').match(arg)):
         r = parse_no_range(arg)
         if not r:
             return True # invalid, and error already printed
-        if len(program_items()) == 0:
+        if len(program._program) == 0:
             return True # empty program
+        for no in program.line_nos(range=r):
+            no_tuple = (Token.Literal.Number.Integer, "{:5} ".format(no))
+            prompt_toolkit.print_formatted_text(PygmentsTokens([no_tuple] + list(program.get_lexed(no))[:-1]))
+        return True
+        # old; remove:
         def next_line(items):        
             program_text = '\n'.join(line for no, line in items) + '\n'
             lexed = pygments.lex(program_text, pyglexer)
@@ -141,9 +228,8 @@ def is_edit_command(line) -> bool: # -> bool
                     line = []
                 else:
                     line.append(item)
-        shown = False
-        for no, lex_tuples in next_line(program_items()):
-            if not in_no_range(no, r):
+        for no, lex_tuples in next_line(program._program):
+            if not TheProgram.in_no_range(no, r):
                 if shown:
                     break
                 else:
@@ -155,64 +241,31 @@ def is_edit_command(line) -> bool: # -> bool
     elif cmd == "run":
         if arg is None:
             try:
-                run_program()
+                Runner.run(program)
             except Exception as e:
                 handle_exception(e)
-                pass
             except KeyboardInterrupt:
-                print('Ctrl-C')
-                pass
+                print('KeyboardInterrupt')
             return True
         else: # run PATH
-            is_edit_command("load " + line[4:])
-            return is_edit_command("run")
+            is_edit_command("load " + arg)
+            is_edit_command("run")
+            return True
     elif cmd == "save":
         if arg is None:
-            if program_path is None:
+            if program.path is None:
                 return arg_expected()
-            arg = program_path # default to last used pathname
+            arg = program.path # default to last used pathname
         path = arg + ".py"
-        hb = program_hash_bang or "#!/usr/bin/python3"
-        # where line numbers do not follow the 10-increment pattern,
-        # we add a line-no comment to set the line number
-        def lines(items):
-            yield hb # make files self-executable
-            expected_no = 10
-            for item in program_items():
-                no, line = item
-                if no != expected_no:
-                    yield "# line-no: " + str(no)
-                yield line
-                expected_no = no + 10
-        with open(path, 'w') as f:
-            f.writelines(line + '\n'
-                         for line in lines(program_items()))
-        os.chmod(path, 0o777)
-        print('Saved {} lines to'.format(len(program_items())), path)
-        program_path = arg
-        program_hash_bang = hb
+        program.save(path)
+        print('Saved {} lines to'.format(len(self._program)), path)
         return True
     elif cmd == "load":
         if arg is None:
             return arg_expected()
         path = arg + ".py"
-        with open(path, 'r') as f:
-            lines = f.readlines()
-        line_tuples = []
-        no = 10
-        hb = None
-        for line in lines:
-            if not line_tuples and line.startswith("#!"):
-                hb = line[:-1]
-            elif line.startswith("# line-no: "):
-                no = int(line[11:])
-            else:
-                line_tuples += [(no, line[:-1])]
-                no += 10
-        program = OrderedDict(line_tuples)
-        print('Loaded {} lines from'.format(len(program_items())), path)
-        program_path = arg
-        program_hash_bang = hb
+        program = TheProgram.load(path)
+        print('Loaded {} lines from'.format(len(program._program)), path)
         return True
     return False
 
@@ -226,7 +279,7 @@ def is_add_command(line):
     code = g[1]
     if code.lstrip(' ') == "": # user just hit enter
         return (None, "")
-    program[line_no] = code
+    program.add(line_no, code)
     #print('line_no=', line_no, 'code=', code)
     return (line_no, line)
 
@@ -247,18 +300,11 @@ def _(event):
         b.insert_text(' ') # insert the actual space
         # if line exists then bring it into the editr
         no = int(g[1])
-        if no in program:
-            b.insert_text(program[no], move_cursor=False)
+        line = program.try_get(no)
+        if line:
+            b.insert_text(line, move_cursor=False)
     else:
         b.insert_text(' ') # regular space
-
-def find_next_line_after(line_no):
-    line_nos = [no for no, _ in program_items()]
-    i = 1 + line_nos.index(line_no)
-    if i < len(line_nos):
-        return min(line_no + 10, line_nos[i])
-    else:
-        return line_no + 10
 
 def determine_indent(prev_line): # TODO: make this less simplistic
     # TODO: the following are examples of what is not handled:
@@ -283,18 +329,23 @@ def getline(last_edited_line, prev_line):
     prefix = "" # line number and indentation
     suffix = "" # existing line content
     if last_edited_line is not None:
-        next_line_no = find_next_line_after(last_edited_line)
+        next_line_no = program.next_line_no_after(last_edited_line)
         prefix = "{:5} ".format(next_line_no)
-        prev_line = program[last_edited_line] # must exist
-        if next_line_no in program:
-            suffix = program[next_line_no]
+        prev_line = program.try_get(last_edited_line) # must exist
+        suffix = program.try_get(next_line_no) or ""
     try:
         if suffix == '':
             prefix += ' ' * determine_indent(prev_line)
         return session.prompt(default=prefix + suffix) # TODO: cursor at pfx
+        # TODO: if all-blank line and no change made by user then return empty line
     except KeyboardInterrupt:
         return ""
  
+import psutil
+mem = psutil.virtual_memory().total
+banner = "\n    **** BASIC PYTHON V1 ****\n\n{:,} BYTES FREE\n".format(mem)
+print(banner)
+
 while True:
     print("Ready.")
     last_edited_line = None
@@ -307,7 +358,7 @@ while True:
         continue
     try:
         last_line = line
-        while shell.runsource(line):
+        while Runner.runsource(line):
             new_line = getline(None, last_line)
             line = line + '\n' + new_line
             last_line = new_line
