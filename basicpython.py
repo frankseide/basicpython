@@ -23,7 +23,7 @@ from pygments.token import Token
 from prompt_toolkit.lexers import PygmentsLexer
 
 class TheProgram:
-    pyglexer = Python3Lexer()
+    lexer = Python3Lexer()
 
     def __init__(self, path=None, hash_bang=None):
         self._program = dict()
@@ -67,14 +67,14 @@ class TheProgram:
 
     def try_get(self, no):
         try:
-            return get(no)
+            return self.get(no)
         except:
             return None
 
     def get_lexed(self, no):
         # TODO: lex the whole thing, not just line by line
         # TODO: cache this
-        return pygments.lex(self._program[no], TheProgram.pyglexer)
+        return pygments.lex(self._program[no], TheProgram.lexer)
 
     def next_line_no_after(self, line_no):
         nos = list(self.line_nos())
@@ -127,8 +127,6 @@ class TheProgram:
         self.path = arg
         self.hash_bang = hb
 
-program = TheProgram()
-
 class Runner:
     shell = code.InteractiveInterpreter(vars)
 
@@ -139,6 +137,7 @@ class Runner:
         def exit(): # prevent program from exiting the environment
             raise KeyboardInterrupt
         run_vars['exit'] = exit # BUGBUG: This does not work.
+        #sys.exit = exit # this works, but also affects our REPL; and will not free the program's resources
         # TODO: __name__
         exec(obj, run_vars, run_vars)
         # Also, to ensure all objects get destroyed, maybe see this:
@@ -148,19 +147,17 @@ class Runner:
     def runsource(line):
         return Runner.shell.runsource(line)
 
-#pyglexer = Python3Lexer()
-lexer = PygmentsLexer(Python3Lexer)
-
-def handle_exception(e):
+def report_exception(e):
     print("".join(traceback.format_exception(*sys.exc_info())))
 
-# TODO: in case of error, we should throw, and catch this above
+class EditCommandError(Exception): # handle_edit_command throws this in case of an error
+    def __init__(self, msg):
+        self.msg = msg
+
 def handle_edit_command(line) -> bool: # -> True if handled
     global program
     p = re.compile('^([a-z]+)( ?) *(.*)$')
-    p1 = re.compile('^([a-z]+) *$')
     m  = p.match(line)
-    m1 = p1.match(line)
     if not m:
         return False
     cmd, space, arg = m.groups()
@@ -168,207 +165,222 @@ def handle_edit_command(line) -> bool: # -> True if handled
         return False # e.g. 'save13 = 5'
     if arg == '':
         arg = None
-    def handled_with_err(msg):
-        print(msg)
-        return True
-    def unexpected_arg():
-        return handled_with_err('SyntaxError: unexpected argument')
-    def arg_expected():
-        return handled_with_err('SyntaxError: required argument missing')
-    def parse_no_range(arg): # None if malformed (error already printed)
+    # helpers for validating and parsing 'arg'
+    def fail(msg):
+        raise EditCommandError(msg)
+    def validate_no_arg():
+        if arg is not None:
+            fail('SyntaxError: {} command unexpects no argument'.format(cmd))
+    def required_arg():
+        if arg is None:
+            fail('SyntaxError: {} command requires an argument'.format(cmd))
+        return arg
+    def arg_as_range(arg) -> tuple:
         if arg is None:
             arg = ''
         p = re.compile('^([0-9]*)(-?)([0-9]*)$')
         m = p.match(arg)
         def malformed():
-            handled_with_err("SyntaxError: mal-formed line number range")
-            return None
+            fail("SyntaxError: mal-formed line number range {}".format(arg))
         if not m:
-            return malformed()
+            malformed()
         first, dash, last = m.groups()
         first = int(first) if first != '' else None
         last  = int(last)  if last  != '' else first if dash != '-' else None
         if first is not None and last is not None and first > last:
-            return malformed()
-        if ((first is not None and first not in program._program) or
-            (last  is not None and last  not in program._program)):
-            handled_with_err("SyntaxError: no such line number")
-            return None
+            malformed()
+        def validate_optional_no(no):
+            if (no is not None and no not in program._program):
+                fail("ArgumentError: {} is not an existing line number".format(no))
+        validate_optional_no(first)
+        validate_optional_no(last)
         return (first, last)
+    def has_range_arg():
+        return re.compile('^[0-9-]').match(arg)
+    # handle command
     if cmd == "new":
-        if arg is not None:
-            return unexpected_arg()
+        validate_no_arg()
         program = TheProgram()
-        return True
     elif cmd == "renumber":
-        if arg is not None:
-            return unexpected_arg()
+        validate_no_arg()
         program = program.renumbered()
-        return True
-    elif cmd == "del" and arg and re.compile('^[0-9-]').match(arg):
-        r = parse_no_range(arg)
-        if not r:
-            return True # invalid, and error already printed
-        for no in program.line_nos(range=r):
+    elif cmd == "del" and arg and has_range_arg(): # note: match 'del' only with number range
+        for no in program.line_nos(range=arg_as_range(arg)):
             program.erase(no)
         return True
-    elif cmd == "list" and (not arg or re.compile('^[0-9-]').match(arg)):
-        r = parse_no_range(arg)
-        if not r:
-            return True # invalid, and error already printed
-        if len(program._program) == 0:
-            return True # empty program
-        for no in program.line_nos(range=r):
+    elif cmd == "list" and (not arg or has_range_arg()): # note: match 'list' only with number range or without arg
+        for no in program.line_nos(range=arg_as_range(arg)):
             no_tuple = (Token.Literal.Number.Integer, " {:5} ".format(no))
             prompt_toolkit.print_formatted_text(PygmentsTokens([no_tuple] + list(program.get_lexed(no))[:-1]))
-        return True
-        # old; remove:
-        def next_line(items):        
-            program_text = '\n'.join(line for no, line in items) + '\n'
-            lexed = pygments.lex(program_text, pyglexer)
-            no_iter = iter([no for no, line in items]) # line numbers
-            line = []
-            for item in lexed:
-                if item[1] == '\n': # end of line: yield it
-                    no = next(no_iter) # this is its line number
-                    yield (no, line)
-                    line = []
-                else:
-                    line.append(item)
-        for no, lex_tuples in next_line(program._program):
-            if not TheProgram.in_no_range(no, r):
-                if shown:
-                    break
-                else:
-                    continue
-            no_tuple = (Token.Literal.Number.Integer, " {:5} ".format(no))
-            print_formatted_text(PygmentsTokens([no_tuple] + lex_tuples))
-            shown = True
-        return True
+    elif cmd == "save":
+        if arg is None:
+            arg = program.path # default to last used pathname (will fail next if none yet)
+        path = required_arg() + ".py"
+        program.save(path)
+        print('Saved {} lines to'.format(len(self._program)), path)
+    elif cmd == "load":
+        path = required_arg() + ".py"
+        program = TheProgram.load(path)
+        print('Loaded {} lines from'.format(len(program._program)), path)
     elif cmd == "run":
         if arg is None:
-            try:
-                Runner.run(program)
-            except Exception as e:
-                handle_exception(e)
-            except KeyboardInterrupt:
-                print('KeyboardInterrupt')
-            return True
+            Runner.run(program)
         else: # run PATH
             handle_edit_command("load " + arg)
             handle_edit_command("run")
-            return True
-    elif cmd == "save":
-        if arg is None:
-            if program.path is None:
-                return arg_expected()
-            arg = program.path # default to last used pathname
-        path = arg + ".py"
-        program.save(path)
-        print('Saved {} lines to'.format(len(self._program)), path)
-        return True
-    elif cmd == "load":
-        if arg is None:
-            return arg_expected()
-        path = arg + ".py"
-        program = TheProgram.load(path)
-        print('Loaded {} lines from'.format(len(program._program)), path)
-        return True
-    return False
+    else:
+        return False    # not handled
+    return True         # handled as an edit command
 
 def handle_enter_line(line):
-    add_line_pattern = re.compile('^  *([0-9]+) (.*)$') # note: must have at least one space; otherwise it's an expression
+    add_line_pattern = re.compile('^  *([0-9]+) (.*)$') # note: must begin with space; otherwise it's an expression
     m = add_line_pattern.match(line)
     if not m:
         return (None, line)
     g = m.groups()
     line_no = int(g[0])
     code = g[1]
-    if code.lstrip(' ') == "": # user just hit enter
-        return (None, "")
+    #if code.lstrip(' ') == "": # user just hit enter
+    #    return (None, "")
     program.add(line_no, code)
     #print('line_no=', line_no, 'code=', code)
     return (line_no, line)
 
-bindings = KeyBindings() #load_key_bindings(enable_search=True, enable_auto_suggest_bindings=True)
-handle = bindings.add
+############################################################################## 
+# Python-aware getline() function via PromptToolkit
+############################################################################## 
 
-@handle(' ')
-def _(event):
-    p = re.compile('^( *)([0-9]+)$')
-    b = event.current_buffer
-    m = p.match(b.text)
-    if m: # TODO: check if we are at line end --  space after line number
-        g = m.groups()
-        spaces_needed = 5 - len(g[0]) - len(g[1])
-        if spaces_needed > 0:
-            b.delete_before_cursor(len(g[1]))
-            b.insert_text(' ' * spaces_needed + g[1], overwrite=True)
-        b.insert_text(' ') # insert the actual space
-        # if line exists then bring it into the editr
-        no = int(g[1])
-        line = program.try_get(no)
-        if line:
-            b.insert_text(line, move_cursor=False)
-    else:
-        b.insert_text(' ') # regular space
+def create_getline():
+    # create bindings
+    # We handle ' ' (to right-align line numbers and indent) and Backspace (to unalign and unindent)
+    bindings = KeyBindings()
 
-def determine_indent(prev_line): # TODO: make this less simplistic
-    # TODO: the following are examples of what is not handled:
-    #  - ':' and 'pass' vs. line-end comments
-    #  - multi-line expressions (both indent inside, and see above)
-    #  - return statement should unindent as well
-    if prev_line is None:
-        return 0
-    indent = len(prev_line) - len(prev_line.lstrip(' '))
-    if prev_line.endswith(':'):
-        indent += 4
-    elif prev_line.endswith('pass') and indent >= 4:
-        indent -= 4
-    return indent
+    @bindings.add(' ')
+    def _(event):
+        global program
+        p = re.compile('^( *)([0-9]+)$')
+        b = event.current_buffer
+        m = p.match(b.text)
+        if m: # TODO: check if we are at line end --  space after line number
+            space, no_str = m.groups()
+            spaces_needed = 6 - len(space) - len(no_str)
+            if spaces_needed > 0:
+                b.delete_before_cursor(len(no_str))
+                b.insert_text(' ' * spaces_needed + no_str, overwrite=True)
+            b.insert_text(' ') # insert the actual space
+            # if line exists then bring it into the editor
+            no = int(no_str)
+            line = program.try_get(no)
+            if line:
+                b.insert_text(line, move_cursor=False)
+        else:
+            b.insert_text(' ') # regular space
 
-history = InMemoryHistory()
-session = prompt_toolkit.PromptSession(key_bindings=bindings,
-                                       history=history,
-                                       lexer=lexer)
+    @bindings.add('c-h')
+    def _(event):
+        p = re.compile('^( *)([0-9]+) $')
+        b = event.current_buffer
+        m = p.match(b.text)
+        if m and len(b.text) == 7: # DEL right after line number: undo leading spaces, so one can type expressions
+            space, no_str = m.groups()
+            b.delete_before_cursor(len(b.text)) # delete all
+            b.insert_text(no_str) # reinsert plain number
+        else:
+            # delete indentation
+            if b.text.endswith('    '):
+                b.delete_before_cursor(4) # unindent
+            else:
+                b.delete_before_cursor(1)
 
-def getline(last_edited_line, prev_line):
-    prefix = "" # line number and indentation
-    suffix = "" # existing line content
-    if last_edited_line is not None:
-        next_line_no = program.next_line_no_after(last_edited_line)
-        prev_line = program.get(last_edited_line) # must exist
-        prefix = " {:5} ".format(next_line_no)
-        suffix = program.try_get(next_line_no) or ""
-    try:
-        if suffix == "":
-            prefix += ' ' * determine_indent(prev_line)
-        return session.prompt(default=prefix + suffix) # TODO: cursor at prefix
-        # TODO: if all-blank line and no change made by user then return empty line
-    except KeyboardInterrupt:
-        return ""
- 
+    # create lexer for syntax highlighting
+    lexer = PygmentsLexer(Python3Lexer)
+
+    # create PromptSession. This is the line editor.
+    prompt_session = prompt_toolkit.PromptSession(key_bindings=bindings,
+                                                  history=InMemoryHistory(),
+                                                  lexer=lexer)
+
+    # this is the getline() function we return
+    def getline(last_entered_line_no, prev_line):
+        global program
+        prefix = "" # line number and indentation
+        suffix = "" # existing line content
+        if last_entered_line_no is not None:
+            next_line_no = program.next_line_no_after(last_entered_line_no)
+            prev_line = program.get(last_entered_line_no) # for indent. Known to exist.
+            prefix = " {:5} ".format(next_line_no)
+            suffix = program.try_get(next_line_no) or "" # get existing line into edit buffer
+        try:
+            if suffix == "":    # auto-indent
+                def determine_indent(prev_line): # TODO: make this less simplistic
+                    # TODO: the following are examples of what is not handled:
+                    #  - ':' and 'pass' vs. line-end comments
+                    #  - multi-line expressions (both indent inside, and see above)
+                    #  - return statement should unindent as well
+                    if prev_line is None:
+                        return 0
+                    indent = len(prev_line) - len(prev_line.lstrip(' '))
+                    if prev_line.endswith(':'):
+                        indent += 4
+                    elif prev_line.endswith('pass') and indent >= 4:
+                        indent -= 4
+                    return indent
+                prefix += ' ' * determine_indent(prev_line)
+            line = prompt_session.prompt(default=prefix + suffix) # TODO: cursor at prefix
+            # TODO: if all-blank line and no change made by user then return empty line
+            any_edits = line != prefix + suffix
+            if not any_edits and suffix == "":
+                return ""
+            return line
+        except KeyboardInterrupt:
+            return ""
+    return getline
+
+############################################################################## 
+# main loop
+############################################################################## 
+
+getline = create_getline()
+
+program = TheProgram()
+
 import psutil
 mem = psutil.virtual_memory().total
 banner = "\n    **** BASIC PYTHON V1 ****\n\n{:,} BYTES FREE\n".format(mem)
 print(banner)
 
 while True:
+    # fetch line with READY prompt
     print("Ready.")
-    last_edited_line = None
-    line = getline(last_edited_line, None)
-    (last_edited_line, line) = handle_enter_line(line)
-    while last_edited_line is not None: # no READY between entered lines
-        line = getline(last_edited_line, None)
-        (last_edited_line, line) = handle_enter_line(line)
-    if handle_edit_command(line):
+    last_entered_line_no = None
+    line = getline(last_entered_line_no, None)
+
+    # handle entering a line (starts with space then number)
+    (last_entered_line_no, line) = handle_enter_line(line)
+    while last_entered_line_no is not None: # no READY prompt when entering multiple lines
+        line = getline(last_entered_line_no, None)
+        (last_entered_line_no, line) = handle_enter_line(line)
+
+    # not a line being entered: maybe an editing keyword?
+    try:
+        if handle_edit_command(line):
+            continue
+    except EditCommandError as e: # we get here if it was an edit command that failed
+        print(e.msg)
         continue
+    except KeyboardInterrupt: # e.g. Ctrl-C during list
+        print('KeyboardInterrupt')
+        continue
+    except Exception as e: # error during execution, e.g. file not found
+        report_exception(e)
+        continue
+
+    # no editing keyword: regular Python code
     try:
         last_line = line
         while Runner.runsource(line):
             new_line = getline(None, last_line)
             line = line + '\n' + new_line
             last_line = new_line
-    except Exception as e:
-        handle_exception(e)
-        pass
+    except Exception as e: # runsource catches all exceptions; this is just to be sure we won't die
+        report_exception(e)
