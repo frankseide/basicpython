@@ -124,7 +124,7 @@ class TheProgram:
             f.writelines(line + '\n'
                          for line in lines(self._program))
         os.chmod(path, 0o777)
-        self.path = arg
+        self.path = path
         self.hash_bang = hb
 
 class Runner:
@@ -208,8 +208,33 @@ def handle_edit_command(line) -> bool: # -> True if handled
         for no in program.line_nos(range=arg_as_range(arg)):
             program.erase(no)
         return True
-    elif cmd == "list" and (not arg or has_range_arg()): # note: match 'list' only with number range or without arg
-        for no in program.line_nos(range=arg_as_range(arg)):
+    elif cmd == "list" and (not arg or has_range_arg()
+                            or arg.startswith("class")
+                            or arg.startswith("def")): # note: match 'list' only with number range or without arg
+        if arg and (arg.startswith("class") or arg.startswith("def")): # list classes and/or defs
+            p = re.compile('^([a-z]*)( ?) *([a-zA-Z0-9_\.]*)$')
+            m = p.match(arg)
+            def malformed():
+                fail("SyntaxError: mal-formed class/def spec {}".format(arg))
+            if not m:
+                malformed()
+            keyword, space, name = m.groups()
+            if keyword != "class" and keyword != "def":
+                malformed()
+            if space == '' and name != '':
+                malformed()
+            p = re.compile(' *' + keyword + '  *([a-zA-Z0-9_]*)')
+            def matching_lines():
+                for no in program.line_nos():
+                    line = program.get(no)
+                    m = p.match(line)
+                    if m:
+                        if name == '' or name == m.groups()[0]:
+                            yield no
+            nos = matching_lines()
+        else: # list by line numbers
+            nos = program.line_nos(range=arg_as_range(arg))
+        for no in nos:
             no_tuple = (Token.Literal.Number.Integer, " {:5} ".format(no))
             prompt_toolkit.print_formatted_text(PygmentsTokens([no_tuple] + list(program.get_lexed(no))[:-1]))
     elif cmd == "save":
