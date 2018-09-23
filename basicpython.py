@@ -196,7 +196,13 @@ def handle_edit_command(line) -> bool: # -> True if handled
         validate_optional_no(last)
         return (first, last)
     def has_range_arg():
-        return re.compile('^[0-9-]').match(arg)
+        return arg and re.compile('^[0-9-]+$').match(arg)
+    def has_symbol_arg():
+        return arg and re.compile('^[a-zA-Z_][a-zA-Z0-9_]*$').match(arg)
+    def list_lines(nos):
+        for no in nos:
+            no_tuple = (Token.Literal.Number.Integer, " {:5} ".format(no))
+            prompt_toolkit.print_formatted_text(PygmentsTokens([no_tuple] + list(program.get_lexed(no))[:-1]))
     # handle command
     if cmd == "new":
         validate_no_arg()
@@ -204,39 +210,55 @@ def handle_edit_command(line) -> bool: # -> True if handled
     elif cmd == "renumber":
         validate_no_arg()
         program = program.renumbered()
-    elif cmd == "del" and arg and has_range_arg(): # note: match 'del' only with number range
+    elif cmd == "del" and has_range_arg(): # note: match 'del' only with number range
         for no in program.line_nos(range=arg_as_range(arg)):
             program.erase(no)
         return True
-    elif cmd == "list" and (not arg or has_range_arg()
-                            or arg.startswith("class")
-                            or arg.startswith("def")): # note: match 'list' only with number range or without arg
-        if arg and (arg.startswith("class") or arg.startswith("def")): # list classes and/or defs
-            p = re.compile('^([a-z]*)( ?) *([a-zA-Z0-9_\.]*)$')
-            m = p.match(arg)
-            def malformed():
-                fail("SyntaxError: mal-formed class/def spec {}".format(arg))
-            if not m:
-                malformed()
-            keyword, space, name = m.groups()
-            if keyword != "class" and keyword != "def":
-                malformed()
-            if space == '' and name != '':
-                malformed()
-            p = re.compile(' *' + keyword + '  *([a-zA-Z0-9_]*)')
+    elif cmd == "find" and arg: # string or regex match
+        if arg.startswith('/') and arg.endswith('/'):
+            p = re.compile('.*' + arg[1:-1] + '.*') # TODO: how about this strange pinning to start?
+        else:
+            p = re.compile('.*' + re.escape(arg) + '.*')
+        nos = (no for no in program.line_nos() if p.match(program.get(no)))
+        list_lines(nos)
+    elif cmd == "list" and (not arg or has_range_arg() or has_symbol_arg()): # note: match 'list' only with number range or without arg
+        if has_symbol_arg(): # list classes and/or defs
+            # TODO: Python re's are weird; they seem to imply ^ but not $
+            if arg == "class" or arg == "def": # look for all class or def
+                p = re.compile('.*\\b' + arg + '  *[a-zA-Z_][a-zA-Z0-9_]*.*')
+                single = True
+            else: # look for symbol definition
+                #p = re.compile('.*\\b' + arg + '\\b.*')
+                p = re.compile('.*\\b(def|class)\\b  *' + arg + '\\b.*')
+                single = False
+            print(p)
             def matching_lines():
+                on = False
+                indent = None
                 for no in program.line_nos():
                     line = program.get(no)
                     m = p.match(line)
                     if m:
-                        if name == '' or name == m.groups()[0]:
-                            yield no
+                        on = True # note: nested matches get ignored w.r.t. indentation this way
+                        # TODO: somehow insert a blank line between multiple matches
+                    if on:
+                        yield no
+                        if single: # single match: and done.
+                            on = False
+                        else:
+                            if re.compile('^ *(|#.*)'):
+                                pass
+                            this_indent = len(line) - len(line.lstrip())
+                            if indent is None:
+                                indent = this_indent
+                            elif this_indent <= indent: # reached next block on same indent level
+                                on = False
+                                indent = None
+                            # TODO: include preceding decorators
             nos = matching_lines()
         else: # list by line numbers
             nos = program.line_nos(range=arg_as_range(arg))
-        for no in nos:
-            no_tuple = (Token.Literal.Number.Integer, " {:5} ".format(no))
-            prompt_toolkit.print_formatted_text(PygmentsTokens([no_tuple] + list(program.get_lexed(no))[:-1]))
+        list_lines(nos)
     elif cmd == "save":
         if arg is None:
             arg = program.path # default to last used pathname (will fail next if none yet)
