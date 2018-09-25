@@ -211,7 +211,7 @@ def handle_edit_command(line) -> bool: # -> True if handled
         p = re.compile('^([0-9]*) *([-,]?) *([0-9]*)$')
         m = p.match(arg)
         def malformed():
-            fail("SyntaxError: mal-formed line number range {}".format(arg))
+            fail("SyntaxError: mal-formed line number range '{}'".format(arg))
         if not m:
             malformed()
         first, dash, last = m.groups()
@@ -232,7 +232,7 @@ def handle_edit_command(line) -> bool: # -> True if handled
     def has_range_arg():
         return arg and re.compile('^[0-9]* *[-,]? *[0-9]*$').match(arg) # same re as above except ( )
     def has_symbol_arg():
-        return arg and re.compile('^[a-zA-Z_][a-zA-Z0-9_]*$').match(arg)
+        return arg and re.compile('^[a-zA-Z_][a-zA-Z0-9_]* *,? *[0-9]*$').match(arg)
     def list_lines(nos):
         for no in nos:
             no_tuple = (Token.Literal.Number.Integer, " {:5} ".format(no))
@@ -258,6 +258,15 @@ def handle_edit_command(line) -> bool: # -> True if handled
     elif cmd == "list" and (not arg or has_range_arg() or has_symbol_arg()): # note: match 'list' only with number range or without arg
         if has_symbol_arg(): # list classes and/or defs
             # TODO: Python re's are weird; they seem to imply ^ but not $
+            p = re.compile('^([a-zA-Z_][a-zA-Z0-9_]*) *(,?) *([0-9]*)$')
+            m = p.match(arg)
+            arg, comma, max_count = m.groups()
+            if comma != '':
+                if max_count == '':
+                    fail("SyntaxError: mal-formed line number range ',{}'".format(max_count))
+                max_count = int(max_count)
+            else:
+                max_count = None
             if arg == "class" or arg == "def": # look for all class or def
                 p = re.compile('.*\\b' + arg + '  *[a-zA-Z_][a-zA-Z0-9_]*.*')
                 single = True
@@ -267,6 +276,7 @@ def handle_edit_command(line) -> bool: # -> True if handled
                 single = False
             print(p)
             def matching_lines():
+                nonlocal max_count
                 on = False
                 indent = None
                 re_empty = re.compile('^ *(|#.*)$')
@@ -288,6 +298,11 @@ def handle_edit_command(line) -> bool: # -> True if handled
                                 indent = None
                                 continue # skip outputting this line
                         yield no
+                        # limit the number of lines
+                        if max_count is not None:
+                            max_count -= 1
+                            if max_count <= 0:
+                                break
                         # TODO: include preceding decorators
             nos = matching_lines()
         else: # list by line numbers
