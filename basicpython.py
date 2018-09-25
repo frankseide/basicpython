@@ -25,6 +25,7 @@ from bisect import bisect
 
 class TheProgram:
     lexer = Python3Lexer()
+    max_line_no = 99999
 
     def __init__(self, path=None, hash_bang=None):
         self._program = dict()
@@ -180,9 +181,12 @@ class Runner:
 def report_exception(e):
     print("".join(traceback.format_exception(*sys.exc_info())))
 
-class EditCommandError(Exception): # handle_edit_command throws this in case of an error
+class EditError(Exception): # handle_edit_command throws this in case of an error
     def __init__(self, msg):
         self.msg = msg
+
+def fail(msg):
+    raise EditError(msg)
 
 def handle_edit_command(line) -> bool: # -> True if handled
     global program
@@ -196,8 +200,6 @@ def handle_edit_command(line) -> bool: # -> True if handled
     if arg == '':
         arg = None
     # helpers for validating and parsing 'arg'
-    def fail(msg):
-        raise EditCommandError(msg)
     def validate_no_arg():
         if arg is not None:
             fail('SyntaxError: {} command unexpects no argument'.format(cmd))
@@ -334,10 +336,10 @@ def handle_enter_line(line):
     if not m:
         return (None, line)
     g = m.groups()
-    line_no = int(g[0])
-    code = g[1]
-    #if code.lstrip(' ') == "": # user just hit enter
-    #    return (None, "")
+    line_no, code = m.groups()
+    line_no = int(line_no)
+    if line_no > TheProgram.max_line_no:
+        fail('ValueError: line number {} exceeds maximum allowed line number'.format(TheProgram.max_line_no))
     program.add(line_no, code)
     #print('line_no=', line_no, 'code=', code)
     return (line_no, line)
@@ -415,9 +417,10 @@ def create_getline():
         if last_entered_line_no is not None:
             next_line_no = program.line_no_after(last_entered_line_no) or last_entered_line_no + 10
             next_line_no = min(next_line_no, last_entered_line_no + 10)
-            prev_line = program.get(last_entered_line_no) # for indent. Known to exist.
-            prefix = " {:5} ".format(next_line_no)
-            suffix = program.try_get(next_line_no) or "" # get existing line into edit buffer
+            if next_line_no <= TheProgram.max_line_no:
+                prev_line = program.get(last_entered_line_no) # for indent. Known to exist.
+                prefix = " {:5} ".format(next_line_no)
+                suffix = program.try_get(next_line_no) or "" # get existing line into edit buffer
         try:
             if suffix == "":    # auto-indent
                 prefix += ' ' * TheProgram.determine_indent(prev_line)
@@ -451,16 +454,20 @@ while True:
     line = getline(last_entered_line_no, None)
 
     # handle entering a line (starts with space then number)
-    (last_entered_line_no, line) = handle_enter_line(line)
-    while last_entered_line_no is not None: # no READY prompt when entering multiple lines
-        line = getline(last_entered_line_no, None)
+    try:
         (last_entered_line_no, line) = handle_enter_line(line)
+        while last_entered_line_no is not None: # no READY prompt when entering multiple lines
+            line = getline(last_entered_line_no, None)
+            (last_entered_line_no, line) = handle_enter_line(line)
+    except EditError as e: # we get here if the line number was too large
+        print(e.msg)
+        continue
 
     # not a line being entered: maybe an editing keyword?
     try:
         if handle_edit_command(line):
             continue
-    except EditCommandError as e: # we get here if it was an edit command that failed
+    except EditError as e: # we get here if it was an edit command that failed
         print(e.msg)
         continue
     except KeyboardInterrupt: # e.g. Ctrl-C during list
