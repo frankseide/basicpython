@@ -224,4 +224,5 @@ requires a special command as shown here:
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 pip3 install -e git+https://github.com/jonathanslenders/python-prompt-toolkit@2.0.4#egg=prompt_toolkit
+pip3 install pygments
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
