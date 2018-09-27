@@ -198,7 +198,8 @@ then list any function or class by name, for example `list Bullet`. Assuming
 your code contains a class called `Bullet`, this will list the lines containing
 the class definition. Further, you can select specific functions inside a class
 (or functions defined inside other functions) using dot notation, for example
-`list Bullet.__init__`.
+`list Bullet.__init__`. The listing can also be limited to the first number of
+lines, e.g. `list main,10`.
 
 A more generic search operation is the `find` command, which allows you to list
 all lines containing a specific symbol. For example, `find i` will list all

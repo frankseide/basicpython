@@ -21,9 +21,11 @@ import pygments
 from pygments.lexers import Python3Lexer
 from pygments.token import Token
 from prompt_toolkit.lexers import PygmentsLexer
+from bisect import bisect
 
 class TheProgram:
     lexer = Python3Lexer()
+    max_line_no = 99999
 
     def __init__(self, path=None, hash_bang=None):
         self._program = dict()
@@ -76,14 +78,21 @@ class TheProgram:
         # TODO: cache this
         return pygments.lex(self._program[no], TheProgram.lexer)
 
-    def next_line_no_after(self, line_no):
+    def line_no_after(self, line_no, steps=1): # or None. line_no must exist
         nos = list(self.line_nos())
-        i = 1 + nos.index(line_no)
-        # TODO: there probably is a proper iterator-based way to do this
+        i = nos.index(line_no) + steps # bisect_right(nos, line_no) or so
         if i < len(nos):
-            return min(line_no + 10, nos[i])
+            return nos[i]
         else:
-            return line_no + 10
+            return None
+
+    def line_no_before(self, line_no): # or None. line_no may not exist
+        nos = list(self.line_nos())
+        i = bisect(nos, line_no) - 1
+        if i >= 0:
+            return nos[i]
+        else:
+            return None
 
     def renumbered(self):
         new_program = TheProgram(path=self.path, hash_bang=self.hash_bang)
@@ -127,6 +136,20 @@ class TheProgram:
         self.path = path
         self.hash_bang = hb
 
+    def determine_indent(prev_line): # TODO: make this less simplistic
+        # TODO: the following are examples of what is not handled:
+        #  - ':' and 'pass' vs. line-end comments
+        #  - multi-line expressions (both indent inside, and see above)
+        #  - return statement should unindent as well
+        if prev_line is None:
+            return 0
+        indent = len(prev_line) - len(prev_line.lstrip(' '))
+        if prev_line.endswith(':'):
+            indent += 4
+        elif prev_line.endswith('pass') and indent >= 4:
+            indent -= 4
+        return indent
+
 class Runner:
     shell = code.InteractiveInterpreter(vars)
 
@@ -137,9 +160,17 @@ class Runner:
         def exit(): # prevent program from exiting the environment
             raise KeyboardInterrupt
         run_vars['exit'] = exit # BUGBUG: This does not work.
-        #sys.exit = exit # this works, but also affects our REPL; and will not free the program's resources
-        # TODO: __name__
-        exec(obj, run_vars, run_vars)
+        old_exit = sys.exit
+        try:
+            sys.exit = exit # this works, but also affects our REPL; and will not free the program's resources
+            # TODO: __name__
+            exec(obj, run_vars, run_vars)
+        finally:
+            sys.exit = old_exit
+            print('caught')
+            # break circular references
+            for key, val in run_vars.items():
+                run_vars[key] = None
         # Also, to ensure all objects get destroyed, maybe see this:
         # http://lucumr.pocoo.org/2011/2/1/exec-in-python/
         # indicating that Python explicitly delets vars before shutting down.
@@ -150,9 +181,12 @@ class Runner:
 def report_exception(e):
     print("".join(traceback.format_exception(*sys.exc_info())))
 
-class EditCommandError(Exception): # handle_edit_command throws this in case of an error
+class EditError(Exception): # handle_edit_command throws this in case of an error
     def __init__(self, msg):
         self.msg = msg
+
+def fail(msg):
+    raise EditError(msg)
 
 def handle_edit_command(line) -> bool: # -> True if handled
     global program
@@ -166,8 +200,6 @@ def handle_edit_command(line) -> bool: # -> True if handled
     if arg == '':
         arg = None
     # helpers for validating and parsing 'arg'
-    def fail(msg):
-        raise EditCommandError(msg)
     def validate_no_arg():
         if arg is not None:
             fail('SyntaxError: {} command unexpects no argument'.format(cmd))
@@ -178,27 +210,31 @@ def handle_edit_command(line) -> bool: # -> True if handled
     def arg_as_range(arg) -> tuple:
         if arg is None:
             arg = ''
-        p = re.compile('^([0-9]*)(-?)([0-9]*)$')
+        p = re.compile('^([0-9]*) *([-,]?) *([0-9]*)$')
         m = p.match(arg)
         def malformed():
-            fail("SyntaxError: mal-formed line number range {}".format(arg))
+            fail("SyntaxError: mal-formed line number range '{}'".format(arg))
         if not m:
             malformed()
         first, dash, last = m.groups()
         first = int(first) if first != '' else None
-        last  = int(last)  if last  != '' else first if dash != '-' else None
-        if first is not None and last is not None and first > last:
-            malformed()
+        last  = int(last)  if last  != '' else first if dash == '' else None
+        if dash == ',': # convert , expression. Number after comma is number of lines.
+            if not last: # (None or 0)
+                malformed()
+            last = program.line_no_after(first, steps=last-1)
         def validate_optional_no(no):
             if (no is not None and no not in program._program):
                 fail("ArgumentError: {} is not an existing line number".format(no))
         validate_optional_no(first)
         validate_optional_no(last)
+        if first is not None and last is not None and first > last:
+            malformed()
         return (first, last)
     def has_range_arg():
-        return arg and re.compile('^[0-9-]+$').match(arg)
+        return arg and re.compile('^[0-9]* *[-,]? *[0-9]*$').match(arg) # same re as above except ( )
     def has_symbol_arg():
-        return arg and re.compile('^[a-zA-Z_][a-zA-Z0-9_]*$').match(arg)
+        return arg and re.compile('^[a-zA-Z_][a-zA-Z0-9_]* *,? *[0-9]*$').match(arg)
     def list_lines(nos):
         for no in nos:
             no_tuple = (Token.Literal.Number.Integer, " {:5} ".format(no))
@@ -224,6 +260,15 @@ def handle_edit_command(line) -> bool: # -> True if handled
     elif cmd == "list" and (not arg or has_range_arg() or has_symbol_arg()): # note: match 'list' only with number range or without arg
         if has_symbol_arg(): # list classes and/or defs
             # TODO: Python re's are weird; they seem to imply ^ but not $
+            p = re.compile('^([a-zA-Z_][a-zA-Z0-9_]*) *(,?) *([0-9]*)$')
+            m = p.match(arg)
+            arg, comma, max_count = m.groups()
+            if comma != '':
+                if max_count == '':
+                    fail("SyntaxError: mal-formed line number range ',{}'".format(max_count))
+                max_count = int(max_count)
+            else:
+                max_count = None
             if arg == "class" or arg == "def": # look for all class or def
                 p = re.compile('.*\\b' + arg + '  *[a-zA-Z_][a-zA-Z0-9_]*.*')
                 single = True
@@ -233,8 +278,10 @@ def handle_edit_command(line) -> bool: # -> True if handled
                 single = False
             print(p)
             def matching_lines():
+                nonlocal max_count
                 on = False
                 indent = None
+                re_empty = re.compile('^ *(|#.*)$')
                 for no in program.line_nos():
                     line = program.get(no)
                     m = p.match(line)
@@ -242,19 +289,23 @@ def handle_edit_command(line) -> bool: # -> True if handled
                         on = True # note: nested matches get ignored w.r.t. indentation this way
                         # TODO: somehow insert a blank line between multiple matches
                     if on:
-                        yield no
                         if single: # single match: and done.
                             on = False
-                        else:
-                            if re.compile('^ *(|#.*)'):
-                                pass
+                        elif not re_empty.match(line):
                             this_indent = len(line) - len(line.lstrip())
                             if indent is None:
                                 indent = this_indent
                             elif this_indent <= indent: # reached next block on same indent level
                                 on = False
                                 indent = None
-                            # TODO: include preceding decorators
+                                continue # skip outputting this line
+                        yield no
+                        # limit the number of lines
+                        if max_count is not None:
+                            max_count -= 1
+                            if max_count <= 0:
+                                break
+                        # TODO: include preceding decorators
             nos = matching_lines()
         else: # list by line numbers
             nos = program.line_nos(range=arg_as_range(arg))
@@ -285,10 +336,10 @@ def handle_enter_line(line):
     if not m:
         return (None, line)
     g = m.groups()
-    line_no = int(g[0])
-    code = g[1]
-    #if code.lstrip(' ') == "": # user just hit enter
-    #    return (None, "")
+    line_no, code = m.groups()
+    line_no = int(line_no)
+    if line_no > TheProgram.max_line_no:
+        fail('ValueError: line number {} exceeds maximum allowed line number'.format(TheProgram.max_line_no))
     program.add(line_no, code)
     #print('line_no=', line_no, 'code=', code)
     return (line_no, line)
@@ -299,8 +350,14 @@ def handle_enter_line(line):
 
 def create_getline():
     # create bindings
-    # We handle ' ' (to right-align line numbers and indent) and Backspace (to unalign and unindent)
+    # We handle ' ' (to right-align line numbers and indent), Backspace (to unalign and unindent), and Esc
     bindings = KeyBindings()
+
+    @bindings.add('escape')
+    def _(event):
+        # TODO: somehow user must press Esc twice; not optimal
+        b = event.current_buffer
+        b.transform_current_line(lambda _: "")
 
     @bindings.add(' ')
     def _(event):
@@ -320,6 +377,11 @@ def create_getline():
             line = program.try_get(no)
             if line:
                 b.insert_text(line, move_cursor=False)
+            # else if it does not exist, then check the previous line and indent
+            else:
+                prev_no = program.line_no_before(no)
+                indent = TheProgram.determine_indent(prev_no and program.get(prev_no))
+                b.insert_text(' ' * indent)
         else:
             b.insert_text(' ') # regular space
 
@@ -353,26 +415,15 @@ def create_getline():
         prefix = "" # line number and indentation
         suffix = "" # existing line content
         if last_entered_line_no is not None:
-            next_line_no = program.next_line_no_after(last_entered_line_no)
-            prev_line = program.get(last_entered_line_no) # for indent. Known to exist.
-            prefix = " {:5} ".format(next_line_no)
-            suffix = program.try_get(next_line_no) or "" # get existing line into edit buffer
+            next_line_no = program.line_no_after(last_entered_line_no) or last_entered_line_no + 10
+            next_line_no = min(next_line_no, last_entered_line_no + 10)
+            if next_line_no <= TheProgram.max_line_no:
+                prev_line = program.get(last_entered_line_no) # for indent. Known to exist.
+                prefix = " {:5} ".format(next_line_no)
+                suffix = program.try_get(next_line_no) or "" # get existing line into edit buffer
         try:
             if suffix == "":    # auto-indent
-                def determine_indent(prev_line): # TODO: make this less simplistic
-                    # TODO: the following are examples of what is not handled:
-                    #  - ':' and 'pass' vs. line-end comments
-                    #  - multi-line expressions (both indent inside, and see above)
-                    #  - return statement should unindent as well
-                    if prev_line is None:
-                        return 0
-                    indent = len(prev_line) - len(prev_line.lstrip(' '))
-                    if prev_line.endswith(':'):
-                        indent += 4
-                    elif prev_line.endswith('pass') and indent >= 4:
-                        indent -= 4
-                    return indent
-                prefix += ' ' * determine_indent(prev_line)
+                prefix += ' ' * TheProgram.determine_indent(prev_line)
             line = prompt_session.prompt(default=prefix + suffix) # TODO: cursor at prefix
             # TODO: if all-blank line and no change made by user then return empty line
             any_edits = line != prefix + suffix
@@ -403,16 +454,20 @@ while True:
     line = getline(last_entered_line_no, None)
 
     # handle entering a line (starts with space then number)
-    (last_entered_line_no, line) = handle_enter_line(line)
-    while last_entered_line_no is not None: # no READY prompt when entering multiple lines
-        line = getline(last_entered_line_no, None)
+    try:
         (last_entered_line_no, line) = handle_enter_line(line)
+        while last_entered_line_no is not None: # no READY prompt when entering multiple lines
+            line = getline(last_entered_line_no, None)
+            (last_entered_line_no, line) = handle_enter_line(line)
+    except EditError as e: # we get here if the line number was too large
+        print(e.msg)
+        continue
 
     # not a line being entered: maybe an editing keyword?
     try:
         if handle_edit_command(line):
             continue
-    except EditCommandError as e: # we get here if it was an edit command that failed
+    except EditError as e: # we get here if it was an edit command that failed
         print(e.msg)
         continue
     except KeyboardInterrupt: # e.g. Ctrl-C during list
