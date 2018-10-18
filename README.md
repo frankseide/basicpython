@@ -1,5 +1,5 @@
-`basicpython` is an interactive Python shell (aka REPL) that also allows to
-**edit and run small programs inside of the shell** using **BASIC-style
+`basicpython` is an interactive Python shell (aka Read-Eval-Print-Loop, or REPL) that also allows to
+**edit and run small programs inside of the REPL** using **BASIC-style
 line-number based code editing**.
 
 As someone who grew up with the BASIC computers of the 80s, I always appreciated
@@ -17,7 +17,7 @@ BASIC done right. But Python lacks this directness, because one cannot edit and
 run Python code from *inside* the interactive Python session. You need a
 separate text editor, and a separate shell like bash to run programs.
 
-`basicpython` extends the Python shell to allow you to enter a small program
+`basicpython` extends the Python REPL to allow you to enter a small program
 directly using line numbers, `list` it, `save` it to disk, and `run` it right
 there. For nostalgic reasons, it also replaces the `>>>` prompt with a friendly
 `READY.`
@@ -65,6 +65,7 @@ and classes, and importing modules.
 To review the program, use the `list` command:
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+READY.
 list
     10 for i in range(3):
     20     print(i)
@@ -81,6 +82,7 @@ lines starting from line 100.
 To run your program, type `run` and hit the `Enter` key:
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+READY.
 run
 0
 1
@@ -104,6 +106,7 @@ press the `Esc` key. You can now `list` the program to verify that the new line
 is there:
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+READY.
 list
     10 for i in range(3):
     15     print('----')
@@ -129,6 +132,7 @@ To delete a line, use the `del` command. For example, delete line 15 by typing
 `del 15`, then `list` the program again:
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+READY.
 del 15
 READY.
 list
@@ -165,11 +169,13 @@ list
 READY.
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-But now let’s reload it, to show that this will overwrite the change you just
+But now let's reload it, to show that this will overwrite the change you just
 made:
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+READY.
 load my_first_program
+READY.
 list
     10 for i in range(3):
     20     print(i)
@@ -179,6 +185,7 @@ READY.
 You can also combine the `load` and `run` command into a single line:
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+READY.
 run my_first_program
 0
 1
@@ -208,6 +215,7 @@ command also allows to find arbitrary text by using regular expressions. For
 example:
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+READY.
 find /int/
     20     print(i)
 READY.
@@ -226,4 +234,37 @@ requires a special command as shown here:
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 pip3 install -e git+https://github.com/jonathanslenders/python-prompt-toolkit@2.0.4#egg=prompt_toolkit
 pip3 install pygments
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Then fetch `basicpython` with git:
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+git clone https://github.com/frankseide/basicpython.git
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+### Starting `basicpython`
+
+Once you have installed the above prerequisites, run the following command:
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+basicpython/basicpython.py
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+This will take you into the Python REPL that has the additional commands described above.
+You should see this friendly message and are ready to type away:
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+    **** BASIC PYTHON V1 ****
+
+270,378,254,336 BYTES FREE
+
+READY.
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+On Windows, the command to run is this:
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+python basicpython\basicpython.py
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
