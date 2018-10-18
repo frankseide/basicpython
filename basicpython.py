@@ -157,16 +157,18 @@ class Runner:
         obj = compile('\n'.join(program.text()), 'program', mode='exec')
         run_vars = dict(vars)
         run_vars['__file__'] = program.path
-        def exit(): # prevent program from exiting the environment
-            raise KeyboardInterrupt
-        run_vars['exit'] = exit # BUGBUG: This does not work.
-        old_exit = sys.exit
+        #def exit(): # prevent program from exiting the environment
+        #    raise KeyboardInterrupt
+        #run_vars['exit'] = exit # BUGBUG: This does not work.
+        #old_exit = sys.exit
         try:
             sys.exit = exit # this works, but also affects our REPL; and will not free the program's resources
             # TODO: __name__
             exec(obj, run_vars, run_vars)
+        except SystemExit:
+            print('Program complete') # @TODO: remove this
         finally:
-            sys.exit = old_exit
+            #sys.exit = old_exit
             print('caught')
             # break circular references
             for key, val in run_vars.items():
