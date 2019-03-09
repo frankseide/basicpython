@@ -166,10 +166,10 @@ class Runner:
             # TODO: __name__
             exec(obj, run_vars, run_vars)
         except SystemExit:
-            print('Program complete') # @TODO: remove this
+            print('Program complete', file=sys.stderr) # @TODO: remove this
         finally:
             #sys.exit = old_exit
-            print('caught')
+            #print('caught', file=sys.stderr)
             # break circular references
             for key, val in run_vars.items():
                 run_vars[key] = None
@@ -181,7 +181,7 @@ class Runner:
         return Runner.shell.runsource(line)
 
 def report_exception(e):
-    print("".join(traceback.format_exception(*sys.exc_info())))
+    print("".join(traceback.format_exception(*sys.exc_info())), file=sys.stderr)
 
 class EditError(Exception): # handle_edit_command throws this in case of an error
     def __init__(self, msg):
@@ -190,7 +190,7 @@ class EditError(Exception): # handle_edit_command throws this in case of an erro
 def fail(msg):
     raise EditError(msg)
 
-def handle_edit_command(line) -> bool: # -> True if handled
+def handle_edit_command(line, pretty_print_fn) -> bool: # -> True if handled
     global program
     p = re.compile('^([a-z]+)( ?) *(.*)$')
     m  = p.match(line)
@@ -240,7 +240,8 @@ def handle_edit_command(line) -> bool: # -> True if handled
     def list_lines(nos):
         for no in nos:
             no_tuple = (Token.Literal.Number.Integer, " {:5} ".format(no))
-            prompt_toolkit.print_formatted_text(PygmentsTokens([no_tuple] + list(program.get_lexed(no))[:-1]))
+            tokens = PygmentsTokens([no_tuple] + list(program.get_lexed(no))[:-1])
+            pretty_print_fn(tokens)
     # handle command
     if cmd == "new":
         validate_no_arg()
@@ -278,7 +279,7 @@ def handle_edit_command(line) -> bool: # -> True if handled
                 #p = re.compile('.*\\b' + arg + '\\b.*')
                 p = re.compile('.*\\b(def|class)\\b  *' + arg + '\\b.*')
                 single = False
-            print(p)
+            #print(p, file=sys.stderr)
             def matching_lines():
                 nonlocal max_count
                 on = False
@@ -317,17 +318,17 @@ def handle_edit_command(line) -> bool: # -> True if handled
             arg = program.path # default to last used pathname (will fail next if none yet)
         path = required_arg() + ".py"
         program.save(path)
-        print('Saved {} lines to'.format(len(self._program)), path)
+        print('Saved {} lines to'.format(len(self._program)), path, file=sys.stderr)
     elif cmd == "load":
         path = required_arg() + ".py"
         program = TheProgram.load(path)
-        print('Loaded {} lines from'.format(len(program._program)), path)
+        print('Loaded {} lines from'.format(len(program._program)), path, file=sys.stderr)
     elif cmd == "run":
         if arg is None:
             Runner.run(program)
         else: # run PATH
-            handle_edit_command("load " + arg)
-            handle_edit_command("run")
+            handle_edit_command("load " + arg, pretty_print_fn)
+            handle_edit_command("run", pretty_print_fn)
     else:
         return False    # not handled
     return True         # handled as an edit command
@@ -343,14 +344,14 @@ def handle_enter_line(line):
     if line_no > TheProgram.max_line_no:
         fail('ValueError: line number {} exceeds maximum allowed line number'.format(TheProgram.max_line_no))
     program.add(line_no, code)
-    #print('line_no=', line_no, 'code=', code)
+    #print('line_no=', line_no, 'code=', code, file=sys.stderr)
     return (line_no, line)
 
 ############################################################################## 
-# Python-aware getline() function via PromptToolkit
+# Python-aware readline() function via PromptToolkit
 ############################################################################## 
 
-def create_getline():
+def create_readline():
     # create bindings
     # We handle ' ' (to right-align line numbers and indent), Backspace (to unalign and unindent), and Esc
     bindings = KeyBindings()
@@ -410,8 +411,15 @@ def create_getline():
     prompt_session = prompt_toolkit.PromptSession(key_bindings=bindings,
                                                   history=InMemoryHistory(),
                                                   lexer=lexer)
-
+    
     # this is the getline() function we return
+    return lambda prefix, suffix: prompt_session.prompt(default=prefix + suffix)
+
+############################################################################## 
+# main loop
+############################################################################## 
+
+def create_getline(readline):
     def getline(last_entered_line_no, prev_line):
         global program
         prefix = "" # line number and indentation
@@ -426,7 +434,7 @@ def create_getline():
         try:
             if suffix == "":    # auto-indent
                 prefix += ' ' * TheProgram.determine_indent(prev_line)
-            line = prompt_session.prompt(default=prefix + suffix) # TODO: cursor at prefix
+            line = readline(default=prefix + suffix, pos=len(prefix)) # TODO: cursor at prefix
             # TODO: if all-blank line and no change made by user then return empty line
             any_edits = line != prefix + suffix
             if not any_edits and suffix == "":
@@ -436,55 +444,65 @@ def create_getline():
             return ""
     return getline
 
-############################################################################## 
-# main loop
-############################################################################## 
+def repl(readline = None, pretty_print_fn = None):
+    if readline is None:
+        readline = create_readline()
+    if pretty_print_fn is None:
+        pretty_print_fn = prompt_toolkit.print_formatted_text
+    getline = create_getline(readline)
 
-getline = create_getline()
+    global program
+    program = TheProgram()
 
-program = TheProgram()
+    import psutil
+    mem = psutil.virtual_memory().total
+    banner = "\n       **** BASIC PYTHON V1 ****\n\n{:,} BYTES FREE\n".format(mem)
+    print(banner, file=sys.stderr)
 
-import psutil
-mem = psutil.virtual_memory().total
-banner = "\n    **** BASIC PYTHON V1 ****\n\n{:,} BYTES FREE\n".format(mem)
-print(banner)
-
-while True:
-    # fetch line with READY prompt
-    print("Ready.")
-    last_entered_line_no = None
-    line = getline(last_entered_line_no, None)
-
-    # handle entering a line (starts with space then number)
-    try:
-        (last_entered_line_no, line) = handle_enter_line(line)
-        while last_entered_line_no is not None: # no READY prompt when entering multiple lines
+    while True:
+        # fetch line with READY prompt
+        print("READY.", file=sys.stderr)
+        last_entered_line_no = None
+        line = getline(last_entered_line_no, None)
+        while line == "":
             line = getline(last_entered_line_no, None)
+        if line is None: # EOF
+            return
+
+        # handle entering a line (starts with space then number)
+        try:
             (last_entered_line_no, line) = handle_enter_line(line)
-    except EditError as e: # we get here if the line number was too large
-        print(e.msg)
-        continue
-
-    # not a line being entered: maybe an editing keyword?
-    try:
-        if handle_edit_command(line):
+            while last_entered_line_no is not None: # no READY prompt when entering multiple lines
+                line = getline(last_entered_line_no, None)
+                if line is None: # EOF
+                    return
+                (last_entered_line_no, line) = handle_enter_line(line)
+        except EditError as e: # we get here if the line number was too large
+            print(e.msg, file=sys.stderr)
             continue
-    except EditError as e: # we get here if it was an edit command that failed
-        print(e.msg)
-        continue
-    except KeyboardInterrupt: # e.g. Ctrl-C during list
-        print('KeyboardInterrupt')
-        continue
-    except Exception as e: # error during execution, e.g. file not found
-        report_exception(e)
-        continue
 
-    # no editing keyword: regular Python code
-    try:
-        last_line = line
-        while Runner.runsource(line):
-            new_line = getline(None, last_line)
-            line = line + '\n' + new_line
-            last_line = new_line
-    except Exception as e: # runsource catches all exceptions; this is just to be sure we won't die
-        report_exception(e)
+        # not a line being entered: maybe an editing keyword?
+        try:
+            if handle_edit_command(line, pretty_print_fn):
+                continue
+        except EditError as e: # we get here if it was an edit command that failed
+            print(e.msg, file=sys.stderr)
+            continue
+        except KeyboardInterrupt: # e.g. Ctrl-C during list
+            print('KeyboardInterrupt, file=sys.stderr')
+            continue
+        except Exception as e: # error during execution, e.g. file not found
+            report_exception(e)
+            continue
+
+        # no editing keyword: regular Python code
+        try:
+            last_line = line
+            while Runner.runsource(line):
+                new_line = getline(None, last_line)
+                if line is None: # EOF
+                    return
+                line = line + '\n' + new_line
+                last_line = new_line
+        except Exception as e: # runsource catches all exceptions; this is just to be sure we won't die
+            report_exception(e)
