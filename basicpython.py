@@ -413,7 +413,10 @@ def create_readline():
                                                   lexer=lexer)
     
     # this is the getline() function we return
-    return lambda prefix, suffix: prompt_session.prompt(default=prefix + suffix)
+    def readline(default, pos):
+        return prompt_session.prompt(default=default)
+
+    return readline
 
 ############################################################################## 
 # main loop
@@ -506,3 +509,6 @@ def repl(readline = None, pretty_print_fn = None):
                 last_line = new_line
         except Exception as e: # runsource catches all exceptions; this is just to be sure we won't die
             report_exception(e)
+
+if __name__ == "__main__":
+    repl()

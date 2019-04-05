@@ -1,4 +1,7 @@
-# Simplified BSD License, Copyright 2011 Al Sweigart
+# prerequisites:
+#  - pip install prompt-toolkit     (2.0.9)
+#  - pip install pygame             (1.9.4)
+#  - pip install --upgrade psutil   (5.6.0)
 
 from basicpython import repl
 
