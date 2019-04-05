@@ -4,7 +4,7 @@ from basicpython import repl
 
 import pygterm64, pygame, sys
 from pygame.locals import *
-win = pygterm64.PygTerm64(80, 15, sysfont = ("Consolas", 12), half_height = False)
+win = pygterm64.PygTerm64(50, 30, sysfont = ("Consolas", 20), half_height = False, fullscreen=True)
 win.autoblit = False
 
 class StdoutProxy:
